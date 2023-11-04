@@ -72,7 +72,8 @@ max_seq_length = 2000
 
 save_interval = epoch_size # save every epoch
 log_interval = 1
-run_name = f'{args.note} normal_loss_{learning_rate}_{data_path.split(".")[0]}'
+run_name = f'{args.note} altered_loss_{learning_rate}_{data_path.split(".")[0]}'
+print(run_name)
 out_dir: str = 'runs/'+run_name
 
 # wandb configuration

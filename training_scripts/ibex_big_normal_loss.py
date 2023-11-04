@@ -15,12 +15,12 @@ import lightning as L
 from lightning.fabric.strategies import DeepSpeedStrategy
 
 # support running without installing as a package
-wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook 
+wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook     
 sys.path.append(str(wd))
 
 import whisper_openAI.whisper as whisper
-from lit_jais.utils import get_batch, build_prompt, adapter_state_from_state_dict
-from lit_jais.modeling_jais import JAISLMHeadModel
+from lit_jais_big.utils import get_batch, build_prompt, adapter_state_from_state_dict
+from lit_jais_big.modeling_jais import JAISLMHeadModel
 from transformers import AutoTokenizer #, AutoModelForCausalLM
 from transformers.models.auto.configuration_auto import AutoConfig
 
@@ -72,8 +72,7 @@ max_seq_length = 2000
 
 save_interval = epoch_size # save every epoch
 log_interval = 1
-run_name = f'{args.note} llm_debugging_{learning_rate}_{data_path.split(".")[0]}'
-print(run_name)
+run_name = f'{args.note} BIG_normal_loss_{learning_rate}_{data_path.split(".")[0]}'
 out_dir: str = 'runs/'+run_name
 
 # wandb configuration
@@ -253,8 +252,8 @@ def validate(fabric: L.Fabric, model: torch.nn.Module, val_data: np.ndarray) -> 
 
 def loss_fn(logits, targets):
     # shift the targets such that output n predicts token n+1
-    logits = logits[..., :-1, :].contiguous()
-    targets = targets[..., 1:].contiguous()
+    logits = logits.contiguous()
+    targets = targets.contiguous()
     loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
     return loss
     
