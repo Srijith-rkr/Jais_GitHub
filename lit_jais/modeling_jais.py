@@ -387,7 +387,7 @@ class JAISAttention(nn.Module):
         return outputs  # a, present, (attentions)
 
 
-class JAISMLP(nn.Module):
+class   JAISMLP(nn.Module):
     def __init__(self, intermediate_size, config):
         super().__init__()
         embed_dim = config.hidden_size
@@ -421,6 +421,7 @@ class JAISBlock(nn.Module):
         self.adapter_down = nn.Linear(hidden_size, hidden_size//256)
         self.adapter_swigu = nn.GELU()
         self.adapter_up = nn.Linear(hidden_size//256, hidden_size)
+        self.adapter_ln = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         if config.add_cross_attention:
             self.crossattention = JAISAttention(config, is_cross_attention=True, layer_idx=layer_idx)
@@ -455,7 +456,7 @@ class JAISBlock(nn.Module):
         outputs = attn_outputs[1:]
         # residual connection
         hidden_states = attn_output + residual  #  
-        hidden_states = hidden_states + self.adapter_up(self.adapter_swigu(self.adapter_down(hidden_states)))
+        hidden_states = hidden_states + self.adapter_up(self.adapter_swigu(self.adapter_down(self.adapter_ln(hidden_states))))
 
         if encoder_hidden_states is not None:
             # add one self-attention block for cross-attention
