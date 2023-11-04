@@ -120,3 +120,6 @@ def count_no_of_datapoints_within_length(dataset, length):
 # for i in tqdm(range(len(dataset))): 
 #     x = get_batch(dataset, tokenizer ,no_of_datapoints = 4, max_context_length= 400, train = True)
     
+def adapter_state_from_state_dict(state_dict: dict) -> dict:
+    """Returns the model state dict with only the adapter weights for saving."""
+    return {name: param for name, param in state_dict.items() if "adapter" in name }
