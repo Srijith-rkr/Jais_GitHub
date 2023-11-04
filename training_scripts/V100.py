@@ -19,7 +19,7 @@ wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook
 sys.path.append(str(wd))
 
 import whisper_openAI.whisper as whisper
-from lit_jais.dataloader import get_batch, build_prompt
+from lit_jais.utils import get_batch, build_prompt, adapter_state_from_state_dict
 from lit_jais.modeling_jais import JAISLMHeadModel
 from transformers import AutoTokenizer #, AutoModelForCausalLM
 from transformers.models.auto.configuration_auto import AutoConfig
@@ -48,11 +48,14 @@ gradient_accumulation_steps = batch_size // micro_batch_size
 
 with open(data_path,'r') as file:
     dataset = json.load(file)
-train_data = dataset[:1000]
-val_data   = dataset[1000:]
+train_data = dataset[:100]
+val_data   = dataset[1400:]
 
 train_data_len = len(train_data)
 val_data_len = len(val_data)
+
+# Had to make tokenzier global to be shared b/w get batch and main 
+tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding = False) # The dataloader/get_batch handels the padding requirements
 
 print('loaded data')
 
@@ -109,11 +112,12 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         
         config = AutoConfig.from_pretrained(
-                        '/home/radhaks/repos/jais_dir/lit_jais',
+                        os.path.join(os. getcwd(),'lit_jais'),
                         trust_remote_code=True) # The attibutes in cofig dict have conditions for trust_remote_Code to be true
                     
     cache_dir = '/data/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
     if not os.path.isdir(cache_dir):
+        cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights'
         raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
         
     with fabric.init_module():
@@ -126,12 +130,11 @@ def main():
         if 'bin' in name and 'json' not in name:
             saves.append(os.path.join(cache_dir,name))
         
+    print('Loading Jais checkpoints')
     checkpoint = OrderedDict() 
     for i in tqdm(saves):
         this = torch.load(i, map_location = torch.device('cpu'))
         checkpoint = checkpoint | this
-        
-    print('Loaded Jais checkpoints')
                     
     with fabric.init_module():
          # strict=False because missing keys due to adapter weights not containted in state dict  
@@ -149,7 +152,6 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay= 0)
     model, optimizer = fabric.setup(model, optimizer)
-    tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding = False) # The dataloader/get_batch handels the padding requirements
     train(fabric, model, optimizer, train_data, val_data, out_dir, tokenizer)
     wandb.finish()
 
@@ -172,15 +174,14 @@ def train(
     """
     step_count = 0 # gets updated each time you compleate a batch aka each time you take a step
 
-    for iter_num in range(max_iters):
+    for iter_num in tqdm(range(max_iters)):
 
         t0 = time.time()
 
         x, y = get_batch(train_data, tokenizer ,train=True, no_of_datapoints = micro_batch_size, no_of_demonstrations = 0, max_context_length = max_seq_length)
         x , y = fabric.to_device((x.pin_memory(), y.pin_memory()))
-        x = x[:,:5]
-        y = y[:,:5]
-        logits = model(x)
+        x = x[:,:5]; y = y[:,:5]
+        logits = model(x)[0]
         loss = loss_fn(logits, y)
         with fabric.no_backward_sync(model, enabled=((iter_num + 1) % gradient_accumulation_steps != 0)): # Skip gradient synchronization during backward to avoid redundant communication overhead (Sync after gradient accumaltion is done)
             fabric.backward(loss / gradient_accumulation_steps)
@@ -194,13 +195,13 @@ def train(
             lr = learning_rate - ((learning_rate - 1e-5)/max_iters)*(iter_num)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
-            wandb.log({"lr": lr})
+            #wandb.log({"lr": lr})
 
         dt = time.time() - t0
         
         if iter_num % log_interval == 0:
             fabric.print(f"iter {iter_num}: loss {loss.item():.4f}, time: {dt:.2f}s")
-            wandb.log({"train_iter": iter_num, "train_Iter_loss": loss.item()})
+            #wandb.log({"train_iter": iter_num, "train_Iter_loss": loss.item()})
             
        # Saving Adapter weights at the end of epoch
         if (iter_num + 1) % epoch_size == 0:
@@ -211,7 +212,7 @@ def train(
             val_loss = validate(fabric, model, val_data)
             fabric.print(f"step {iter_num}: val loss {val_loss:.4f}")
             fabric.barrier()
-            wandb.log({"val_step": iter_num, "val_step_loss": val_loss})
+            #wandb.log({"val_step": iter_num, "val_step_loss": val_loss})
             print('End of epoch ',(iter_num+1)/epoch_size)
 
 
@@ -230,9 +231,11 @@ def validate(fabric: L.Fabric, model: torch.nn.Module, val_data: np.ndarray) -> 
     model.eval()
     losses = torch.zeros(eval_iters)
     for k in range(eval_iters):
-        input_ids, targets, audio_features = get_batch(fabric, model, val_data)
-        logits = model(input_ids, audio_features = audio_features)
-        loss = loss_fn(logits, targets)
+        x , y = get_batch(val_data, tokenizer ,train=True, no_of_datapoints = micro_batch_size, no_of_demonstrations = 0, max_context_length = max_seq_length)
+        x , y = fabric.to_device((x.pin_memory(), y.pin_memory()))
+        x = x[:,:5]; y = y[:,:5]
+        logits = model(x)[0]
+        loss = loss_fn(logits, y)
         losses[k] = loss.item()
     val_loss = losses.mean()
 
