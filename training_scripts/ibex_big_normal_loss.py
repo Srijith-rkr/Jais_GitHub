@@ -35,10 +35,10 @@ parser.add_argument('--note', type=str,help='In case you want to add someting to
 
 args = parser.parse_args()
 learning_rate = args.lr
-data_path = 'data/shelf_Whisper_L_Temperature_0.9_1500.json'# args.data_path
+data_path = args.data_path
 
 # Hyperparameters
-num_epochs = 10
+num_epochs = 15
 
 # Batch and device configuration
 devices = args.d
@@ -72,13 +72,13 @@ max_seq_length = 2000
 
 save_interval = epoch_size # save every epoch
 log_interval = 1
-run_name = f'{args.note} BIG_normal_loss_{learning_rate}_{data_path.split(".")[0]}'
+run_name = f'{args.note}BIG_normal_loss_{learning_rate}_{data_path}'
 out_dir: str = 'runs/'+run_name
 
 # wandb configuration
 wandb.login()
 wandb.init(
-    project="Jais_inference",
+    project="Jais_training",
     name=run_name,
     #group=run_name
     config={
@@ -119,7 +119,7 @@ def main():
                     
     cache_dir = '/data/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
     if not os.path.isdir(cache_dir):
-        cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights'
+        cache_dir =  '/home/radhaks/repos/Whispering-LLaMA/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
         if not os.path.isdir(cache_dir):
             raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
         

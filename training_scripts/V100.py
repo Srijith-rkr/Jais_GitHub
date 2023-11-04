@@ -117,7 +117,7 @@ def main():
                     
     cache_dir = '/data/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
     if not os.path.isdir(cache_dir):
-        cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights'
+        cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
         raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
         
     with fabric.init_module():
