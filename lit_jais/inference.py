@@ -21,35 +21,38 @@ from lightning.fabric.strategies import DeepSpeedStrategy
 wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook 
 sys.path.append(str(wd))
 
-import whisper_openAI.whisper as whisper
+#import whisper_openAI.whisper as whisper
 from lit_jais.utils import get_batch, adapter_state_from_state_dict, build_prompt
 from lit_jais.modeling_jais import JAISLMHeadModel
 from transformers import AutoTokenizer #, AutoModelForCausalLM
 from transformers.models.auto.configuration_auto import AutoConfig
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--data_path', type=str, help= 'Path to data', default= '/home/radhaks/repos/Jais_GitHub/data/shelf_Whisper_L_Temperature_0.9_1500.json') 
-parser.add_argument('--adapter_path', type=str, help= 'Path to adapter checkpoint', default= '/home/radhaks/repos/Jais_GitHub/runs/from_ibex/ altered_loss_0.001_data/shelf_Whisper_L_Temperature_0/iter-000006.pth') 
-parser.add_argument('--batch', type=int, default=2, help= 'Number of datapoints to use for batch inference')
+parser.add_argument('--data_path', type=str, help= 'Path to data json file') 
+parser.add_argument('--adapter_path', type=str, help= 'Path to adapter checkpoint') 
+parser.add_argument('--batch', type=int, default=1, help= 'Number of datapoints to use for batch inference')
 args = parser.parse_args()
 
 batch = args.batch
 devices = 1
 tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding_side='left') 
 
+torch.set_float32_matmul_precision("high") # For A100 GPUs
+
 # Temproray dataset 
 
 with open(args.data_path,'r') as file:
     dataset = json.load(file)
-dataset = dataset[1480:]
+dataset = dataset[0:1000]
 
 wandb.login()
 wandb.init(
     # set the wandb project where this run will be logged
     project="Jais_inference", 
-    name= f'Inferece_{args.adapter_path}',
+    name= f'Full_run_0_demonstration{args.adapter_path}',
         config={
     "dataset_len": len(dataset),
+    'note':'Made the mistake of running previous run with 1 demo',
     }
 )
 
@@ -72,8 +75,9 @@ if fabric.global_rank == 0:
                 
 cache_dir = '/data/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
 if not os.path.isdir(cache_dir):
-    cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights'
-    raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
+    cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
+    if not os.path.isdir(cache_dir):
+        raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
     
 with fabric.init_module():
     model = JAISLMHeadModel(config) # instead of model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", trust_remote_code=True,cache_dir= '/data/jaise_weights')
@@ -92,18 +96,15 @@ for i in tqdm(saves):
     checkpoint = checkpoint | this
     
 #adapter_path = '/home/radhaks/repos/Jais_GitHub/runs/from_ibex/ altered_loss_0.001_data/shelf_Whisper_L_Temperature_0/iter-000006.pth'
-adapter_checkpoint = torch.load(args.adapter_path, map_location = torch.device('cpu'))
-checkpoint = checkpoint | adapter_checkpoint 
-print('Added adapter checkpoint')
                 
 with fabric.init_module():
     # strict=True to check adapter weight compatabiy 
-    model.load_state_dict(checkpoint, strict=True)
+    model.load_state_dict(checkpoint, strict=False)
 print('loaded Jias model')
 
 for n,p in model.named_parameters():
         p.requires_grad = False
-
+        
 
 def get_response(text,tokenizer=tokenizer,model=model):
     input_ids = tokenizer(text, return_tensors="pt",padding = True).input_ids
@@ -114,7 +115,7 @@ def get_response(text,tokenizer=tokenizer,model=model):
         top_p=0.9,
         temperature=0.3,
         max_length=2048-input_len,
-        min_length=input_len + 4,
+ #       min_length=input_len + 4,
         repetition_penalty=1.2,
         do_sample=True,
     )
@@ -124,29 +125,13 @@ def get_response(text,tokenizer=tokenizer,model=model):
     return response
 
 
-prompts = [build_prompt(i, dataset, num_demonstrations = 1, num_candidates = 15)[0] for i in tqdm(dataset)]
+prompts = [build_prompt(i, dataset, num_demonstrations = 0, num_candidates = 15)[0] for i in tqdm(dataset)]
 ground_truths = [i['ground_truth'].strip() for i in tqdm(dataset)]
-responses = []
 oracle = []
 
-# Running Inference
-print('Running Inference')
-for i in tqdm(range(0, len(prompts), batch)):
-    responses.extend(get_response(prompts[i:i+batch]))
-
-# Checking
-if len(responses) != len(ground_truths):
-    raise RuntimeError('Responses and groundtruths have difference number of elements')
-
-# Cleaning responses
-for i in range(len(responses)):
-    responses[i] = responses[i][len(prompts[i]):].strip()
-    
 # Getting oracle
 for datapoint in tqdm(dataset):
     ground_truth = datapoint['ground_truth']
-
-
     max_wer = 100
     best_candidate = ''
 
@@ -157,23 +142,58 @@ for datapoint in tqdm(dataset):
             max_wer = candidate_wer
 
     oracle.append(best_candidate)
-    
-if len(responses) != len(oracle):
-    raise RuntimeError('Responses and oracle have difference number of elements')
-    
-    
-word_error_rate = round( wer.compute(predictions=responses, references=ground_truth), 2)
-char_error_rate = round( cer.compute(predictions=responses, references=ground_truth), 2)
-print(f"Prediction WER: {word_error_rate} CER: {char_error_rate}")
 
-oracle_wer = round( wer.compute(predictions= oracle, references=ground_truth), 2)
-oracle_cer = round(cer.compute(predictions= oracle, references=ground_truth), 2)
-print(f"Oracle WER: {oracle_wer} CER: {oracle_cer}")
 
-wandb.log({
-    'word_error_rate':word_error_rate,
-    "char_error_rate":char_error_rate,
-    "oracle_wer":oracle_wer,
-    "oracle_cer":oracle_cer})
 
+checkpoints = os.listdir(args.adapter_path)
+checkpoints.sort()
+
+for n in checkpoints:
+    responses = []
+    adapter_checkpoint = torch.load(os.path.join(args.adapter_path,n), map_location = torch.device('cpu'))
     
+    with fabric.init_module():
+        # strict=True to check adapter weight compatabiy 
+        model.load_state_dict(adapter_checkpoint, strict=False)
+        print('Added adapter checkpoint',n)
+
+
+    # Running Inference
+    print('Running Inference')
+    for i in tqdm(range(0, len(prompts), batch)):
+        responses.extend(get_response(prompts[i:i+batch]))
+
+    # Checking
+    if len(responses) != len(ground_truths):
+        raise RuntimeError('Responses and groundtruths have difference number of elements')
+
+    # Cleaning responses
+    for i in range(len(responses)):
+        responses[i] = responses[i][len(prompts[i]):].strip()
+        
+
+    if len(responses) != len(oracle):
+        raise RuntimeError('Responses and oracle have difference number of elements')
+        
+        
+    word_error_rate = round( wer.compute(predictions=responses, references=ground_truths), 2)
+    char_error_rate = round( cer.compute(predictions=responses, references=ground_truths), 2)
+    print('for {n}')
+    print(f"Prediction WER: {word_error_rate} CER: {char_error_rate}")
+
+    oracle_wer = round( wer.compute(predictions= oracle, references=ground_truths), 2)
+    oracle_cer = round(cer.compute(predictions= oracle, references=ground_truths), 2)
+    print(f"Oracle WER: {oracle_wer} CER: {oracle_cer}")
+
+    wandb.log({
+        "word_error_rate": word_error_rate,
+        "char_error_rate": char_error_rate,
+        "oracle_wer":oracle_wer,
+        "oracle_cer":oracle_cer
+        })
+
+
+
+
+
+        

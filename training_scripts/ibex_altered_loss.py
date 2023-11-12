@@ -18,7 +18,7 @@ from lightning.fabric.strategies import DeepSpeedStrategy
 wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook 
 sys.path.append(str(wd))
 
-import whisper_openAI.whisper as whisper
+#import whisper_openAI.whisper as whisper
 from lit_jais.utils import get_batch, build_prompt, adapter_state_from_state_dict
 from lit_jais.modeling_jais import JAISLMHeadModel
 from transformers import AutoTokenizer #, AutoModelForCausalLM
@@ -38,7 +38,7 @@ learning_rate = args.lr
 data_path = args.data_path
 
 # Hyperparameters
-num_epochs = 15
+num_epochs = 10
 
 # Batch and device configuration
 devices = args.d
@@ -46,14 +46,21 @@ batch_size = 32 / devices
 micro_batch_size = 4
 gradient_accumulation_steps = batch_size // micro_batch_size
 
+train_data_path = f"/ibex/user/radhaks/LLMs/Jais_GitHub/data/{data_path}_train.json"
+test_data_path = f"/ibex/user/radhaks/LLMs/Jais_GitHub/data/{data_path}_test.json"
 
-with open(data_path,'r') as file:
-    dataset = json.load(file)
-train_data = dataset[:1000]
-val_data   = dataset[1000:]
+with open(train_data_path,'r') as file:
+    train_data = json.load(file)
+    
+with open(test_data_path,'r') as file:
+    val_data = json.load(file)
+
+val_data   = val_data[1000:]
 
 train_data_len = len(train_data)
 val_data_len = len(val_data)
+
+print(f'Loaded val with {val_data_len} datapoints and train with {train_data_len} datapoints')
 
 # Had to make tokenzier global to be shared b/w get batch and main 
 tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding = False) # The dataloader/get_batch handels the padding requirements
@@ -66,7 +73,7 @@ eval_iters = val_data_len // micro_batch_size  // devices
 warmup_steps = epoch_size * 0 // devices 
 
 # Context configuration 
-max_seq_length = 2000
+max_seq_length = 1800
 
 # Checkpointing configuration
 
@@ -120,7 +127,7 @@ def main():
                     
     cache_dir = '/data/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
     if not os.path.isdir(cache_dir):
-        cache_dir =  '/home/radhaks/repos/Whispering-LLaMA/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
+        cache_dir = '/home/radhaks/repos/Whispering-LLaMA/jaise_weights/models--inception-mbzuai--jais-13b-chat/snapshots/2a47bcd25d5c7cc5a528ed86ebfe147480929c5d/'
         if not os.path.isdir(cache_dir):
             raise FileNotFoundError(f"Can't find the pretrained weights at {cache_dir}.")
         

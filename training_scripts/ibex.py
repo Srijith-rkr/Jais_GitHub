@@ -18,7 +18,7 @@ from lightning.fabric.strategies import DeepSpeedStrategy
 wd = Path(__file__).parent.parent.resolve() # does not work as jupyter notebook 
 sys.path.append(str(wd))
 
-import whisper_openAI.whisper as whisper
+#import whisper_openAI.whisper as whisper
 from lit_jais.utils import get_batch, build_prompt, adapter_state_from_state_dict
 from lit_jais.modeling_jais import JAISLMHeadModel
 from transformers import AutoTokenizer #, AutoModelForCausalLM
@@ -38,22 +38,29 @@ learning_rate = args.lr
 data_path = args.data_path
 
 # Hyperparameters
-num_epochs = 15
+num_epochs = 10
 
 # Batch and device configuration
 devices = args.d
 batch_size = 32 / devices 
-micro_batch_size = 4
+micro_batch_size = 4    
 gradient_accumulation_steps = batch_size // micro_batch_size
 
+train_data_path = f"/ibex/user/radhaks/LLMs/Jais_GitHub/data/{data_path}_train.json"
+test_data_path = f"/ibex/user/radhaks/LLMs/Jais_GitHub/data/{data_path}_test.json"
 
-with open(data_path,'r') as file:
-    dataset = json.load(file)
-train_data = dataset[:1000]
-val_data   = dataset[1000:]
+with open(train_data_path,'r') as file:
+    train_data = json.load(file)
+    
+with open(test_data_path,'r') as file:
+    val_data = json.load(file)
+
+val_data   = val_data[:1000]
 
 train_data_len = len(train_data)
 val_data_len = len(val_data)
+
+print(f'Loaded val with {val_data_len} datapoints and train with {train_data_len} datapoints')
 
 # Had to make tokenzier global to be shared b/w get batch and main 
 tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding = False) # The dataloader/get_batch handels the padding requirements
@@ -66,13 +73,13 @@ eval_iters = val_data_len // micro_batch_size  // devices
 warmup_steps = epoch_size * 0 // devices 
 
 # Context configuration 
-max_seq_length = 2000
+max_seq_length = 1000
 
 # Checkpointing configuration
 
 save_interval = epoch_size # save every epoch
 log_interval = 1
-run_name = f'{args.note}llm_debugging_{learning_rate}_{data_path}'
+run_name = f'{args.note}full_run_{learning_rate}_{data_path}_{args.d}device'
 print(run_name)
 out_dir: str = 'runs/'+run_name
 
@@ -81,7 +88,7 @@ wandb.login()
 wandb.init(
     project="Jais_training",
     name=run_name,
-    #group=run_name
+    group=run_name,
     config={
     "learning_rate": learning_rate,
     "num_epochs": num_epochs,
@@ -89,7 +96,7 @@ wandb.init(
     "micro_batch_size":micro_batch_size,
     "dataset":'cv_small',
     "note": 'Adapting the training pipeline to ibex',
-  #  'devices':devices
+    'devices':devices
     }
 )
 
