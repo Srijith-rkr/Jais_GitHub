@@ -9,10 +9,17 @@ from tqdm import tqdm
 # with open(path,'r') as file:
 #     dataset = json.load(file)
     
-def build_prompt(datapoint, dataset, num_demonstrations = 1, num_candidates = 15):
+def build_prompt(datapoint, dataset, num_demonstrations = 1, num_candidates = 15, arabic_template = False):
     
-    prompt = '''### Instruction: Your name is Jais. You are built by Inception and MBZUAI. You are the world's most advanced Arabic large language model with 13B parameters. You can answer in Arabic and English only. You are now being tasked as a transcript corrector. You will be provided with multiple Arabic transcripts of a sentence which may be semantically or grammatically wrong. Your task is to use the transcripts and produce the most coherent and semantically correct sentence of what the provided transcripts should mean. Complete the task below between [|Human|] and [|AI|], where  [|Human|] provides the input multiple transcripts and : [|AI|] generates the most likely sentence : \n\n'''
+
+    prompt_en = '''### Instruction: Your name is Jais. You are built by Inception and MBZUAI. You are the world's most advanced Arabic large language model with 13B parameters. You can answer in Arabic and English only. You are now being tasked as a transcript corrector. You will be provided with multiple Arabic transcripts of a sentence which may be semantically or grammatically wrong. Your task is to use the transcripts and produce the most coherent and semantically correct sentence of what the provided transcripts should mean. Complete the task below between [|Human|] and [|AI|], where  [|Human|] provides the input multiple transcripts and : [|AI|] generates the most likely sentence : \n\n'''
+    prompt_ar = '''### Instructions: اسمك جيس. لقد تم بناءك بواسطة Inception و MBZUAI. أنت نموذج اللغة العربية الكبيرة الأكثر تقدمًا في العالم مع بارامترات 13B. يمكنك الإجابة باللغتين العربية والإنجليزية فقط. لقد تم تكليفك الآن بمهمة مصحح النصوص. سيتم تزويدك بنصوص عربية متعددة لجملة قد تكون خاطئة لغويًا أو نحويًا. مهمتك هي الاستفادة من النصوص المفدمة إليك واستخدامها لإنتاج الجملة الأكثر تماسكًا وصحيحة لغويًا لما يجب أن تعنيه هذه النصوص. أكمل المهمة أدناه بين [|Human|] و[|AI|]، حيث يوفر [|Human|] نصوصًا متعددة للإدخال و : ينشئ [|AI|] الجملة الأكثر احتمالية : \n\n'''
     
+    if arabic_template :
+        prompt = prompt_ar
+    else:
+        prompt = prompt_en
+        
     ix = torch.randint(len(dataset), (num_demonstrations,)).tolist()
     # Loop for demonstrations
     for i in ix:
@@ -32,7 +39,7 @@ def build_prompt(datapoint, dataset, num_demonstrations = 1, num_candidates = 15
     prompt_with_response = prompt + datapoint['ground_truth']+ '<|endoftext|>' # Did not include space so that this and the groudn truth tokens match in the first level
     return prompt, prompt_with_response
 
-def get_batch(dataset, tokenizer ,train: True, no_of_datapoints = 1, no_of_demonstrations = 0, max_context_length = 2000):
+def get_batch(dataset, tokenizer ,train: True, no_of_datapoints = 1, no_of_demonstrations = 0, max_context_length = 2000, mask = True):
     
     '''
     During train:True, we need the input ids with response and the masked version for training
@@ -79,10 +86,11 @@ def get_batch(dataset, tokenizer ,train: True, no_of_datapoints = 1, no_of_demon
         return torch.full((no_of_datapoints,no_of_datapoints), -1), torch.full((no_of_datapoints,no_of_datapoints), -1)
 
     masked_input_ids_with_response = copy.deepcopy(input_ids_with_response)
-    for i in range(len(masked_input_ids_with_response)):
-        masked_input_ids_with_response[i][:,:-encoded_ground_truths[i].shape[-1]] = -1
-        
-
+    
+    if mask:
+        for i in range(len(masked_input_ids_with_response)):
+            masked_input_ids_with_response[i][:,:-encoded_ground_truths[i].shape[-1]] = -1
+            
     
     max_len = max(s.shape[-1] for s in input_ids_with_response)
     

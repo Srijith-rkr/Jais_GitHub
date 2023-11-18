@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
+import pyarabic.araby as araby
 from collections import OrderedDict
 
 from evaluate import load
@@ -39,17 +40,28 @@ tokenizer = AutoTokenizer.from_pretrained( 'lit_jais', padding_side='left')
 
 torch.set_float32_matmul_precision("high") # For A100 GPUs
 
+path_to_inferences = '/ibex/user/radhaks/LLMs/Jais_GitHub/inferences'
+path_to_runs = '/ibex/user/radhaks/LLMs/Jais_GitHub/runs'
+path_to_data = '/ibex/user/radhaks/LLMs/Jais_GitHub/data'
+
+adapter_path = os.path.join(path_to_runs,args.adapter_path )
+data_path = os.path.join(path_to_data, args.data_path)
+path_to_inferences = os.path.join(path_to_inferences,args.adapter_path)
+
+if not os.path.isdir(path_to_inferences):
+    os.makedirs( path_to_inferences, exist_ok=True)
+
 # Temproray dataset 
 
-with open(args.data_path,'r') as file:
+with open(data_path,'r') as file:
     dataset = json.load(file)
-dataset = dataset[0:1000]
+dataset = dataset[0:100]
 
 wandb.login()
 wandb.init(
     # set the wandb project where this run will be logged
     project="Jais_inference", 
-    name= f'Full_run_0_demonstration{args.adapter_path}',
+    name= f'Clean_lit_jais_{args.adapter_path}',
         config={
     "dataset_len": len(dataset),
     'note':'Made the mistake of running previous run with 1 demo',
@@ -126,8 +138,9 @@ def get_response(text,tokenizer=tokenizer,model=model):
 
 
 prompts = [build_prompt(i, dataset, num_demonstrations = 0, num_candidates = 15)[0] for i in tqdm(dataset)]
-ground_truths = [i['ground_truth'].strip() for i in tqdm(dataset)]
+ground_truths = [i['ground_truth'] for i in tqdm(dataset)]
 oracle = []
+
 
 # Getting oracle
 for datapoint in tqdm(dataset):
@@ -142,21 +155,32 @@ for datapoint in tqdm(dataset):
             max_wer = candidate_wer
 
     oracle.append(best_candidate)
+    
+# Clearing the oracle 
+for i in range(len(oracle)):
+    oracle[i] = ' '.join(oracle[i].replace('،','').replace('.','').replace('؟','').replace(',','').strip().split(' '))
+    oracle[i] = araby.strip_diacritics(oracle[i])
+    
+# Cleaning the groud truths 
+for i in range(len(ground_truths)):
+    ground_truths[i] = ' '.join(ground_truths[i].replace('،','').replace('.','').replace('؟','').replace(',','').strip().split(' '))
+    ground_truths[i] = araby.strip_diacritics(ground_truths[i])
 
 
 
-checkpoints = os.listdir(args.adapter_path)
+checkpoints = os.listdir(adapter_path)
 checkpoints.sort()
 
 for n in checkpoints:
     responses = []
-    adapter_checkpoint = torch.load(os.path.join(args.adapter_path,n), map_location = torch.device('cpu'))
+    to_json = []
     
+    # Loading adapter
+    adapter_checkpoint = torch.load(os.path.join(adapter_path,n), map_location = torch.device('cpu'))
     with fabric.init_module():
         # strict=True to check adapter weight compatabiy 
         model.load_state_dict(adapter_checkpoint, strict=False)
         print('Added adapter checkpoint',n)
-
 
     # Running Inference
     print('Running Inference')
@@ -169,13 +193,15 @@ for n in checkpoints:
 
     # Cleaning responses
     for i in range(len(responses)):
-        responses[i] = responses[i][len(prompts[i]):].strip()
+        responses[i] = responses[i][len(prompts[i]):]
+        responses[i] = ' '.join(responses[i].replace('،','').replace('.','').replace('؟','').replace(',','').strip().split(' '))
+        responses[i] = araby.strip_diacritics(responses[i])
         
-
+    # Checking 
     if len(responses) != len(oracle):
         raise RuntimeError('Responses and oracle have difference number of elements')
-        
-        
+
+
     word_error_rate = round( wer.compute(predictions=responses, references=ground_truths), 2)
     char_error_rate = round( cer.compute(predictions=responses, references=ground_truths), 2)
     print('for {n}')
@@ -191,9 +217,36 @@ for n in checkpoints:
         "oracle_wer":oracle_wer,
         "oracle_cer":oracle_cer
         })
-
-
-
-
-
+    
+    # Saving as inferences in Json file
+    for o,p,g,d in zip(oracle,responses,ground_truths,dataset):
+        entry = {
+            'oracle': o,
+            'prediction':p,
+            'ground_truth':g,
+        'candidates':d['candidates']}
+        to_json.append(entry)
         
+    # Saving
+    save_file = os.path.join(path_to_inferences, f'{n}.json') 
+    with open(save_file,'w') as file:
+        json.dump(to_json,file,indent=4)
+
+
+# If you want to save the outputs
+# to_json = []
+# for o,p,g,d in zip(oracle,responses,ground_truths,dataset):
+#     entry = {
+#         'oracle': o,
+#         'prediction':p,
+#         'ground_truth':g,
+#     'candidates':d['candidates']}
+#     to_json.append(entry)
+# with open(os.path.join('Big_jais_cv11.json'),'w') as file:
+#     json.dump(to_json,file,indent=4)
+
+    # from evaluate import load
+    # wer = load("wer")
+    # cer = load("cer")
+    # ground_truths = [i['ground_truth'].replace(',','').replace('.','').strip() for i in tqdm(dataset)]
+    # word_error_rate = round( wer.compute(predictions=responses, references=ground_truths), 2)
